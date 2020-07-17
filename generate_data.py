@@ -33,12 +33,17 @@ def generate_vrptw_data(dataset_size, vrp_size):
     }
     SERVICE_TIME = 10
     TIME_HORIZON = 1000
+    MEAN_DEMAND = 15
+    STD_DEMAND = 10
+    MIN_DEMAND = 1
+    MAX_DEMAND = 42
 
 # depot, loc, demand, capacity, depot_start_time, depot_finish_time, service_time, time_window_start, \
 #     time_window_finish
-    depot = np.random.uniform(size=(dataset_size, 2))
-    loc = np.random.uniform(size=(dataset_size, vrp_size, 2))
-    demand = np.random.randint(1, 10, size=(dataset_size, vrp_size))
+    depot = np.random.randint(0, 100, size=(dataset_size, 2)).astype(float)
+    loc = np.random.randint(0, 100, size=(dataset_size, vrp_size, 2)).astype(float)
+    demand = np.clip(np.random.normal(MEAN_DEMAND, STD_DEMAND, size=(dataset_size, vrp_size)), a_min=MIN_DEMAND,
+                     a_max=MAX_DEMAND)
     capacity = np.full(dataset_size, CAPACITIES[vrp_size])
     depot_start_time = np.zeros(dataset_size)
     depot_finish_time = TIME_HORIZON*np.ones(dataset_size)
@@ -56,6 +61,9 @@ def generate_vrptw_data(dataset_size, vrp_size):
         time_window_start_time[i] = [np.random.randint(customer_start_time_horizon[i], customer_finish_time_horizon[i])
                                      for i in range(vrp_size)]
         time_window_finish_time[i] = np.maximum(time_window_start_time[i] + 300*epsilon, customer_finish_time_horizon)
+
+    depot /= 100
+    loc /= 100
 
     return list(zip(
         depot.tolist(),  # Depot location

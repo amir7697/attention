@@ -152,17 +152,21 @@ class VRPTWDataset(Dataset):
             }
             SERVICE_TIME = 10
             TIME_HORIZON = 1000
+            MEAN_DEMAND = 15
+            STD_DEMAND = 10
+            MIN_DEMAND = 1
+            MAX_DEMAND = 42
 
-            start_times = torch.FloatTensor(size, 1).uniform_(0, 1)
-            time_intervals = torch.FloatTensor(size, 1).uniform_(0, 1)
-            finish_times = start_times + time_intervals
+            # start_times = torch.FloatTensor(size, 1).uniform_(0, 1)
+            # time_intervals = torch.FloatTensor(size, 1).uniform_(0, 1)
+            # finish_times = start_times + time_intervals
 
             self.data = [
                 {
-                    'loc': torch.FloatTensor(size, 2).uniform_(0, 1),
-                    # Uniform 1 - 9, scaled by capacities
-                    'demand': (torch.FloatTensor(size).uniform_(0, 9).int() + 1).float() / CAPACITIES[size],
-                    'depot': torch.FloatTensor(2).uniform_(0, 1),
+                    'loc': (torch.randint(0, 100, (size, 2)).float())/100,
+                    'demand':  torch.clamp(torch.normal(MEAN_DEMAND, STD_DEMAND, (size, )), min=MIN_DEMAND,
+                                           max=MAX_DEMAND) / CAPACITIES[size],
+                    'depot': (torch.randint(0, 100, (2, )).float())/100,
                     'depotStartTime': torch.zeros(1),
                     'depotFinishTime': TIME_HORIZON * torch.ones(1),
                     'serviceTime': torch.cat((torch.zeros(1), SERVICE_TIME * torch.ones(size)), -1)
@@ -189,7 +193,7 @@ class VRPTWDataset(Dataset):
         self.size = len(self.data)
 
     def calculate_eta(self, first_locs, second_locs):
-        return (first_locs - second_locs).norm(p=2, dim=-1)
+        return 100*(first_locs - second_locs).norm(p=2, dim=-1)
 
     def __len__(self):
         return self.size
