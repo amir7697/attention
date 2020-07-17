@@ -23,6 +23,53 @@ def generate_vrp_data(dataset_size, vrp_size):
     ))
 
 
+
+def generate_vrptw_data(dataset_size, vrp_size):
+    CAPACITIES = {
+        10: 20.,
+        20: 500.,
+        50: 750.,
+        100: 1000.
+    }
+    SERVICE_TIME = 10
+    TIME_HORIZON = 1000
+
+# depot, loc, demand, capacity, depot_start_time, depot_finish_time, service_time, time_window_start, \
+#     time_window_finish
+    depot = np.random.uniform(size=(dataset_size, 2))
+    loc = np.random.uniform(size=(dataset_size, vrp_size, 2))
+    demand = np.random.randint(1, 10, size=(dataset_size, vrp_size))
+    capacity = np.full(dataset_size, CAPACITIES[vrp_size])
+    depot_start_time = np.zeros(dataset_size)
+    depot_finish_time = TIME_HORIZON*np.ones(dataset_size)
+    service_time = SERVICE_TIME*np.ones((dataset_size, vrp_size))
+
+    time_window_start_time = np.zeros((dataset_size, vrp_size))
+    time_window_finish_time = np.zeros((dataset_size, vrp_size))
+
+    for i in range(dataset_size):
+        customer_eta_to_depot = np.linalg.norm(loc[i] - depot[i], axis=1)
+        customer_start_time_horizon = depot_start_time[i] + customer_eta_to_depot + 1
+        customer_finish_time_horizon = depot_finish_time[i] - customer_eta_to_depot
+
+        epsilon = np.clip(abs(np.random.randn(vrp_size)), a_min=0.01, a_max=np.inf)
+        time_window_start_time[i] = [np.random.randint(customer_start_time_horizon[i], customer_finish_time_horizon[i])
+                                     for i in range(vrp_size)]
+        time_window_finish_time[i] = np.maximum(time_window_start_time[i] + 300*epsilon, customer_finish_time_horizon)
+
+    return list(zip(
+        depot.tolist(),  # Depot location
+        loc.tolist(),  # Node locations
+        demand.tolist(),  # Demand, uniform integer 1 ... 9
+        capacity.tolist(),  # Capacity, same for whole dataset
+        depot_start_time.tolist(),
+        depot_finish_time.tolist(),
+        service_time.tolist(),
+        time_window_start_time.tolist(),
+        time_window_finish_time.tolist()
+    ))
+
+
 def generate_op_data(dataset_size, op_size, prize_type='const'):
     depot = np.random.uniform(size=(dataset_size, 2))
     loc = np.random.uniform(size=(dataset_size, op_size, 2))
@@ -99,7 +146,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", default='data', help="Create datasets in data_dir/problem (default 'data')")
     parser.add_argument("--name", type=str, required=True, help="Name to identify dataset")
     parser.add_argument("--problem", type=str, default='all',
-                        help="Problem, 'tsp', 'vrp', 'pctsp' or 'op_const', 'op_unif' or 'op_dist'"
+                        help="Problem, 'tsp', 'vrp', 'vrptw', 'pctsp' or 'op_const', 'op_unif' or 'op_dist'"
                              " or 'all' to generate all")
     parser.add_argument('--data_distribution', type=str, default='all',
                         help="Distributions to generate for problem, default 'all'.")
@@ -118,6 +165,7 @@ if __name__ == "__main__":
     distributions_per_problem = {
         'tsp': [None],
         'vrp': [None],
+        'vrptw': [None],
         'pctsp': [None],
         'op': ['const', 'unif', 'dist']
     }
@@ -154,6 +202,8 @@ if __name__ == "__main__":
                     dataset = generate_tsp_data(opts.dataset_size, graph_size)
                 elif problem == 'vrp':
                     dataset = generate_vrp_data(opts.dataset_size, graph_size)
+                elif problem == 'vrptw':
+                    dataset = generate_vrptw_data(opts.dataset_size, graph_size)
                 elif problem == 'pctsp':
                     dataset = generate_pctsp_data(opts.dataset_size, graph_size)
                 elif problem == "op":

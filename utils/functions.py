@@ -20,7 +20,7 @@ import torch.nn.functional as F
 
 
 def load_problem(name):
-    from problems import TSP, CVRP, SDVRP, OP, PCTSPDet, PCTSPStoch
+    from problems import TSP, CVRP, SDVRP, OP, PCTSPDet, PCTSPStoch, CVRPTW
     problem = {
         'tsp': TSP,
         'cvrp': CVRP,
@@ -28,6 +28,7 @@ def load_problem(name):
         'op': OP,
         'pctsp_det': PCTSPDet,
         'pctsp_stoch': PCTSPStoch,
+        'cvrptw': CVRPTW
     }.get(name, None)
     assert problem is not None, "Currently unsupported problem: {}!".format(name)
     return problem
@@ -39,7 +40,10 @@ def torch_load_cpu(load_path):
 
 def move_to(var, device):
     if isinstance(var, dict):
+        # print('in dict')
         return {k: move_to(v, device) for k, v in var.items()}
+
+    # print('not dict')
     return var.to(device)
 
 

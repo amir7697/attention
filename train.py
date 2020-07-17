@@ -33,6 +33,9 @@ def rollout(model, dataset, opts):
     model.eval()
 
     def eval_model_bat(bat):
+        # print(type(bat['loc']))
+        # for k, v in bat.items():
+        #     print('{}: {}'.format(k, type(v)))
         with torch.no_grad():
             cost, _ = model(move_to(bat, opts.device))
         return cost.data.cpu()
@@ -82,7 +85,6 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     set_decode_type(model, "sampling")
 
     for batch_id, batch in enumerate(tqdm(training_dataloader, disable=opts.no_progress_bar)):
-
         train_batch(
             model,
             optimizer,
