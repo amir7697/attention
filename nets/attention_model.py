@@ -85,7 +85,7 @@ class AttentionModel(nn.Module):
             if self.is_pctsp:
                 node_dim = 4  # x, y, expected_prize, penalty
             elif self.is_vrptw:
-                node_dim = 5  # x, y, demand, start time, finish time
+                node_dim = 3  # x, y, demand, start time, finish time
             else:
                 node_dim = 3  # x, y, demand / prize
 
@@ -208,7 +208,8 @@ class AttentionModel(nn.Module):
             if self.is_vrp:
                 features = ('demand', )
             elif self.is_vrptw:
-                features = ('demand', 'timeWindowStart', 'timeWindowFinish')
+                # features = ('demand', 'timeWindowStart', 'timeWindowFinish')
+                features = ('demand',)
             elif self.is_orienteering:
                 features = ('prize', )
             else:

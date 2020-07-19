@@ -11,6 +11,7 @@ from utils.beam_search import beam_search
 SERVICE_TIME_COST_COEF = 0
 DELAY_COEF = 0.5
 EARLY_COEF = 0.1
+DISTANCE_COST_COEF = 100
 
 class CVRPTW(object):
 
@@ -79,7 +80,7 @@ class CVRPTW(object):
         delay_time = (arrival_times - window_finish_time)*((arrival_times - window_finish_time) > 0).int()
         delay_time_cost = delay_time.sum(dim=1)
 
-        total_cost = distance_cost + SERVICE_TIME_COST_COEF*service_time_cost + \
+        total_cost = DISTANCE_COST_COEF*distance_cost + SERVICE_TIME_COST_COEF*service_time_cost + \
                      EARLY_COEF*early_arrival_cost + DELAY_COEF*delay_time_cost
         return total_cost, None
 
@@ -150,6 +151,13 @@ class VRPTWDataset(Dataset):
                 50: 750.,
                 100: 1000.
             }
+            # CAPACITIES = {
+            #     10: 20.,
+            #     20: 30.,
+            #     50: 40.,
+            #     100: 50.
+            # }
+
             SERVICE_TIME = 10
             TIME_HORIZON = 1000
             MEAN_DEMAND = 15
@@ -163,10 +171,15 @@ class VRPTWDataset(Dataset):
 
             self.data = [
                 {
-                    'loc': (torch.randint(0, 100, (size, 2)).float())/100,
+                    # 'loc': (torch.randint(0, 100, (size, 2)).float())/100,
+                    'loc': torch.rand((size, 2)),
                     'demand':  torch.clamp(torch.normal(MEAN_DEMAND, STD_DEMAND, (size, )), min=MIN_DEMAND,
                                            max=MAX_DEMAND) / CAPACITIES[size],
-                    'depot': (torch.randint(0, 100, (2, )).float())/100,
+                    'depot': torch.rand((2, )),
+                    # 'loc': torch.FloatTensor(size, 2).uniform_(0, 1),
+                    # # Uniform 1 - 9, scaled by capacities
+                    # 'demand': (torch.FloatTensor(size).uniform_(0, 9).int() + 1).float() / CAPACITIES[size],
+                    # 'depot': torch.FloatTensor(2).uniform_(0, 1),
                     'depotStartTime': torch.zeros(1),
                     'depotFinishTime': TIME_HORIZON * torch.ones(1),
                     'serviceTime': torch.cat((torch.zeros(1), SERVICE_TIME * torch.ones(size)), -1)

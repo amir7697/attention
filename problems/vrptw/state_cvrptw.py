@@ -28,6 +28,7 @@ class StateCVRPTW(NamedTuple):
     i: torch.Tensor  # Keeps track of step
 
     VEHICLE_CAPACITY = 1.0  # Hardcoded
+    DISTANCE_COST_COEF = 100
     SERVICE_TIME_COST_COEF = 0
     DELAY_COEF = 0.5
     EARLY_COEF = 0.1
@@ -105,7 +106,8 @@ class StateCVRPTW(NamedTuple):
 
     def get_final_cost(self):
         assert self.all_finished()
-        distance_cost = self.lengths + (self.coords[self.ids, 0, :] - self.cur_coord).norm(p=2, dim=-1)
+        distance_cost = self.DISTANCE_COST_COEF*(self.lengths + (self.coords[self.ids, 0, :] -
+                                                                 self.cur_coord).norm(p=2, dim=-1))
         time_cost = self.SERVICE_TIME_COST_COEF*self.total_service_times
         delay_cost = self.DELAY_COEF*self.total_delay_times
         early_cost = self.EARLY_COEF*self.total_early_times
@@ -181,8 +183,12 @@ class StateCVRPTW(NamedTuple):
 
         # For demand steps_dim is inserted by indexing with id, for used_capacity insert node dim for broadcasting
         exceeds_cap = (self.demand[self.ids, :] + self.used_capacity[:, :, None] > self.VEHICLE_CAPACITY)
+        # eta = (self.coords[:, 1:, :] - self.cur_coord).norm(p=2, dim=-1)
+        # not_started_time = (self.time_window_start[self.ids, 1:] > self.cur_time[:, :, None] + eta[:, None, :])
+        # closed_time = (self.time_window_finish[self.ids, 1:] < self.cur_time[:, :, None] + eta[:, None, :])
         # Nodes that cannot be visited are already visited or too much demand to be served now
         mask_loc = visited_loc.to(exceeds_cap.dtype) | exceeds_cap
+        # | not_started_time | closed_time
 
         # Cannot visit the depot if just visited and still unserved nodes
         mask_depot = (self.prev_a == 0) & ((mask_loc == 0).int().sum(-1) > 0)

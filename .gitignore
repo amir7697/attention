@@ -8,3 +8,7 @@ __pycache__/
 *.tc.*
 *.tc_backward.*
 *.log
+*.pyc
+*.png
+*.gif
+*.amir

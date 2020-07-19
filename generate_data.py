@@ -25,12 +25,19 @@ def generate_vrp_data(dataset_size, vrp_size):
 
 
 def generate_vrptw_data(dataset_size, vrp_size):
+    # CAPACITIES = {
+    #     10: 20.,
+    #     20: 30.,
+    #     50: 40.,
+    #     100: 50.
+    # }
     CAPACITIES = {
         10: 20.,
         20: 500.,
         50: 750.,
         100: 1000.
     }
+
     SERVICE_TIME = 10
     TIME_HORIZON = 1000
     MEAN_DEMAND = 15
@@ -40,8 +47,9 @@ def generate_vrptw_data(dataset_size, vrp_size):
 
 # depot, loc, demand, capacity, depot_start_time, depot_finish_time, service_time, time_window_start, \
 #     time_window_finish
-    depot = np.random.randint(0, 100, size=(dataset_size, 2)).astype(float)
-    loc = np.random.randint(0, 100, size=(dataset_size, vrp_size, 2)).astype(float)
+    depot = np.random.rand(dataset_size, 2) # np.random.randint(0, 100, size=(dataset_size, 2)).astype(float)
+    loc = np.random.rand(dataset_size, vrp_size, 2)
+    # np.random.randint(0, 100, size=(dataset_size, vrp_size, 2)).astype(float)
     demand = np.clip(np.random.normal(MEAN_DEMAND, STD_DEMAND, size=(dataset_size, vrp_size)), a_min=MIN_DEMAND,
                      a_max=MAX_DEMAND)
     capacity = np.full(dataset_size, CAPACITIES[vrp_size])
@@ -53,23 +61,24 @@ def generate_vrptw_data(dataset_size, vrp_size):
     time_window_finish_time = np.zeros((dataset_size, vrp_size))
 
     for i in range(dataset_size):
-        customer_eta_to_depot = np.linalg.norm(loc[i] - depot[i], axis=1)
+        customer_eta_to_depot = 100*np.linalg.norm(loc[i] - depot[i], axis=1)
         customer_start_time_horizon = depot_start_time[i] + customer_eta_to_depot + 1
         customer_finish_time_horizon = depot_finish_time[i] - customer_eta_to_depot
 
         epsilon = np.clip(abs(np.random.randn(vrp_size)), a_min=0.01, a_max=np.inf)
         time_window_start_time[i] = [np.random.randint(customer_start_time_horizon[i], customer_finish_time_horizon[i])
                                      for i in range(vrp_size)]
-        time_window_finish_time[i] = np.maximum(time_window_start_time[i] + 300*epsilon, customer_finish_time_horizon)
-
-    depot /= 100
-    loc /= 100
+        time_window_finish_time[i] = np.minimum(time_window_start_time[i] + 300*epsilon, customer_finish_time_horizon)
 
     return list(zip(
         depot.tolist(),  # Depot location
         loc.tolist(),  # Node locations
+        # np.random.randint(1, 10, size=(dataset_size, vrp_size)).tolist(),  # Demand, uniform integer 1 ... 9
         demand.tolist(),  # Demand, uniform integer 1 ... 9
         capacity.tolist(),  # Capacity, same for whole dataset
+        # np.random.uniform(size=(dataset_size, 2)).tolist(),  # Depot location
+        # np.random.uniform(size=(dataset_size, vrp_size, 2)).tolist(),  # Node locations
+        # np.full(dataset_size, CAPACITIES[vrp_size]).tolist(),
         depot_start_time.tolist(),
         depot_finish_time.tolist(),
         service_time.tolist(),

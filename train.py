@@ -33,9 +33,6 @@ def rollout(model, dataset, opts):
     model.eval()
 
     def eval_model_bat(bat):
-        # print(type(bat['loc']))
-        # for k, v in bat.items():
-        #     print('{}: {}'.format(k, type(v)))
         with torch.no_grad():
             cost, _ = model(move_to(bat, opts.device))
         return cost.data.cpu()
