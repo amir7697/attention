@@ -86,11 +86,13 @@ class AttentionModel(nn.Module):
                 node_dim = 4  # x, y, expected_prize, penalty
             elif self.is_vrptw:
                 node_dim = 3  # x, y, demand, start time, finish time
+                step_context_dim = embedding_dim + 2
             else:
                 node_dim = 3  # x, y, demand / prize
 
             # Special embedding projection for depot node
             self.init_embed_depot = nn.Linear(2, embedding_dim)
+            self.time_window_embedding = nn.Linear(2, embedding_dim//4)
             
             if self.is_vrp and self.allow_partial:  # Need to include the demand if split delivery allowed
                 self.project_node_step = nn.Linear(1, 3 * embedding_dim, bias=False)
@@ -103,7 +105,7 @@ class AttentionModel(nn.Module):
             self.W_placeholder = nn.Parameter(torch.Tensor(2 * embedding_dim))
             self.W_placeholder.data.uniform_(-1, 1)  # Placeholder should be in range of activations
 
-        self.init_embed = nn.Linear(node_dim, embedding_dim)
+        self.init_embed = nn.Linear(node_dim, 3*(embedding_dim//4))
 
         self.embedder = GraphAttentionEncoder(
             n_heads=n_heads,
@@ -218,10 +220,15 @@ class AttentionModel(nn.Module):
             return torch.cat(
                 (
                     self.init_embed_depot(input['depot'])[:, None, :],
-                    self.init_embed(torch.cat((
-                        input['loc'],
-                        *(input[feat][:, :, None] for feat in features)
-                    ), -1))
+                    torch.cat((
+                        self.init_embed(torch.cat((
+                            input['loc'],
+                            *(input[feat][:, :, None] for feat in features)
+                        ), -1)),
+                        self.time_window_embedding(torch.cat((
+                            input['timeWindowStart'][:, :, None], input['timeWindowFinish'][:, :, None]
+                        ), -1))
+                    ), -1)
                 ),
                 1
             )
@@ -384,7 +391,7 @@ class AttentionModel(nn.Module):
         current_node = state.get_current_node()
         batch_size, num_steps = current_node.size()
 
-        if self.is_vrp or self.is_vrptw:
+        if self.is_vrp:
             # Embedding of previous node + remaining capacity
             if from_depot:
                 # 1st dimension is node idx, but we do not squeeze it since we want to insert step dimension
@@ -408,6 +415,34 @@ class AttentionModel(nn.Module):
                                 .expand(batch_size, num_steps, embeddings.size(-1))
                         ).view(batch_size, num_steps, embeddings.size(-1)),
                         self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, None]
+                    ),
+                    -1
+                )
+        elif self.is_vrptw:
+            if from_depot:
+                # 1st dimension is node idx, but we do not squeeze it since we want to insert step dimension
+                # i.e. we actually want embeddings[:, 0, :][:, None, :] which is equivalent
+                return torch.cat(
+                    (
+                        embeddings[:, 0:1, :].expand(batch_size, num_steps, embeddings.size(-1)),
+                        # used capacity is 0 after visiting depot
+                        self.problem.VEHICLE_CAPACITY - torch.zeros_like(state.used_capacity[:, :, None]),
+                        state.cur_time[:, :, None]
+                    ),
+                    -1
+                )
+            else:
+                return torch.cat(
+                    (
+                        torch.gather(
+                            embeddings,
+                            1,
+                            current_node.contiguous()
+                                .view(batch_size, num_steps, 1)
+                                .expand(batch_size, num_steps, embeddings.size(-1))
+                        ).view(batch_size, num_steps, embeddings.size(-1)),
+                        self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, None],
+                        state.cur_time[:, :, None]
                     ),
                     -1
                 )
