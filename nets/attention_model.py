@@ -91,6 +91,16 @@ class AttentionModel(nn.Module):
 
             # Special embedding projection for depot node
             self.init_embed_depot = nn.Linear(2, embedding_dim)
+            if self.is_vrptw:
+                # todo: put it in the input configs
+                time_embedding_dim = embedding_dim
+                time_step_context_dim = time_embedding_dim + 1
+                self.time_init_embed_depot = nn.Linear(2, time_embedding_dim)
+                # todo: service time can be added here
+                self.time_init_embed = nn.Linear(2, time_embedding_dim)
+                self.project_time_fixed_context = nn.Linear(time_embedding_dim, time_embedding_dim, bias=False)
+                self.project_node_time_embeddings = nn.Linear(time_embedding_dim, 3 * time_embedding_dim, bias=False)
+                self.project_time_step_context = nn.Linear(time_step_context_dim, time_embedding_dim, bias=False)
             
             if self.is_vrp and self.allow_partial:  # Need to include the demand if split delivery allowed
                 self.project_node_step = nn.Linear(1, 3 * embedding_dim, bias=False)
@@ -106,6 +116,13 @@ class AttentionModel(nn.Module):
         self.init_embed = nn.Linear(node_dim, embedding_dim)
 
         self.embedder = GraphAttentionEncoder(
+            n_heads=n_heads,
+            embed_dim=embedding_dim,
+            n_layers=self.n_encode_layers,
+            normalization=normalization
+        )
+
+        self.time_embedder = GraphAttentionEncoder(
             n_heads=n_heads,
             embed_dim=embedding_dim,
             n_layers=self.n_encode_layers,
@@ -138,7 +155,11 @@ class AttentionModel(nn.Module):
         else:
             embeddings, _ = self.embedder(self._init_embed(input))
 
-        _log_p, pi = self._inner(input, embeddings)
+        if self.is_vrptw:
+            time_embeddings, _ = self.time_embedder(self._time_init_embed(input=input))
+            _log_p, pi = self._inner_time_window(input, embeddings, time_embeddings)
+        else:
+            _log_p, pi = self._inner(input, embeddings)
 
         cost, mask = self.problem.get_costs(input, pi)
         # Log likelyhood is calculated within the model since returning it per action does not work well with
@@ -202,6 +223,20 @@ class AttentionModel(nn.Module):
         # Calculate log_likelihood
         return log_p.sum(1)
 
+    def _time_init_embed(self, input):
+        # features = ('timeWindowStart', 'timeWindowFinish')
+        # print(input['depotStartTime'].size())
+        depot_time_window_tensor = torch.cat((input['depotStartTime'], input['depotFinishTime']), 1)
+
+        return torch.cat(
+            (
+                self.time_init_embed_depot(depot_time_window_tensor)[:, None, :],
+                self.time_init_embed(torch.cat((input['timeWindowStart'][:, :, None],
+                                                input['timeWindowFinish'][:, :, None]), -1))
+            ),
+            1
+        )
+
     def _init_embed(self, input):
 
         if self.is_vrp or self.is_orienteering or self.is_pctsp or self.is_vrptw:
@@ -227,6 +262,46 @@ class AttentionModel(nn.Module):
             )
         # TSP
         return self.init_embed(input)
+
+    def _inner_time_window(self, input, embeddings, time_embeddings):
+        outputs = []
+        sequences = []
+
+        state = self.problem.make_state(input)
+
+        # Compute keys, values for the glimpse and keys for the logits once as they can be reused in every step
+        fixed = self._precompute(embeddings)
+        time_fixed = self._precompute_time(time_embeddings)
+
+        batch_size = state.ids.size(0)
+
+        # Perform decoding steps
+        i = 0
+        while not (state.all_finished()):
+            log_p, mask = self._get_log_p_time_window(fixed, time_fixed, state)
+
+            # Select the indices of the next nodes in the sequences, result (batch_size) long
+            selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
+
+            state = state.update(selected)
+
+            # Now make log_p, selected desired output size by 'unshrinking'
+            if state.ids.size(0) < batch_size:
+                log_p_, selected_ = log_p, selected
+                log_p = log_p_.new_zeros(batch_size, *log_p_.size()[1:])
+                selected = selected_.new_zeros(batch_size)
+
+                log_p[state.ids[:, 0]] = log_p_
+                selected[state.ids[:, 0]] = selected_
+
+            # Collect output of step
+            outputs.append(log_p[:, 0, :])
+            sequences.append(selected)
+
+            i += 1
+
+        # Collected lists, return Tensor
+        return torch.stack(outputs, 1), torch.stack(sequences, 1)
 
     def _inner(self, input, embeddings):
 
@@ -317,6 +392,21 @@ class AttentionModel(nn.Module):
             assert False, "Unknown decode type"
         return selected
 
+    def _precompute_time(self, time_embeddings, num_steps=1):
+        graph_time_embed = time_embeddings.mean(1)
+        time_fixed_context = self.project_time_fixed_context(graph_time_embed)[:, None, :]
+
+        glimpse_key_fixed, glimpse_val_fixed, logit_key_fixed =\
+            self.project_node_time_embeddings(time_embeddings[:, None, :, :]).chunk(3, dim=-1)
+
+        time_fixed_attention_node_data = (
+            self._make_heads(glimpse_key_fixed, num_steps),
+            self._make_heads(glimpse_val_fixed, num_steps),
+            logit_key_fixed.contiguous()
+        )
+
+        return AttentionModelFixed(time_embeddings, time_fixed_context, *time_fixed_attention_node_data)
+
     def _precompute(self, embeddings, num_steps=1):
 
         # The fixed context projection of the graph embedding is calculated only once for efficiency
@@ -349,6 +439,29 @@ class AttentionModel(nn.Module):
             torch.arange(log_p.size(-1), device=log_p.device, dtype=torch.int64).repeat(log_p.size(0), 1)[:, None, :]
         )
 
+    def _get_log_p_time_window(self,fixed, time_fixed, state, normalize=True):
+        # Compute query = context node embedding
+        query = fixed.context_node_projected + \
+                time_fixed.context_node_projected + \
+                self.project_step_context(self._get_parallel_step_context(fixed.node_embeddings, state)) + \
+                self.project_time_step_context(self._get_parallel_time_step_context(time_fixed.node_embeddings, state))
+
+        # Compute keys and values for the nodes
+        glimpse_K, glimpse_V, logit_K = self._get_attention_node_data_time_window(fixed, time_fixed)
+
+        # Compute the mask
+        mask = state.get_mask()
+
+        # Compute logits (unnormalized log_p)
+        log_p, glimpse = self._one_to_many_logits(query, glimpse_K, glimpse_V, logit_K, mask)
+
+        if normalize:
+            log_p = torch.log_softmax(log_p / self.temp, dim=-1)
+
+        assert not torch.isnan(log_p).any()
+
+        return log_p, mask
+
     def _get_log_p(self, fixed, state, normalize=True):
 
         # Compute query = context node embedding
@@ -370,6 +483,34 @@ class AttentionModel(nn.Module):
         assert not torch.isnan(log_p).any()
 
         return log_p, mask
+
+    def _get_parallel_time_step_context(self, embeddings, state, from_depot=False):
+        current_node = state.get_current_node()
+        batch_size, num_steps = current_node.size()
+
+        if from_depot:
+            return torch.cat(
+                (
+                    embeddings[:, 0:1, :].expand(batch_size, num_steps, embeddings.size(-1)),
+                    # used capacity is 0 after visiting depot
+                    state.cur_time[:, :, None]
+                ),
+                -1
+            )
+        else:
+            return torch.cat(
+                (
+                    torch.gather(
+                        embeddings,
+                        1,
+                        current_node.contiguous()
+                            .view(batch_size, num_steps, 1)
+                            .expand(batch_size, num_steps, embeddings.size(-1))
+                    ).view(batch_size, num_steps, embeddings.size(-1)),
+                    state.cur_time[:, :, None]
+                ),
+                -1
+            )
 
     def _get_parallel_step_context(self, embeddings, state, from_depot=False):
         """
@@ -490,6 +631,13 @@ class AttentionModel(nn.Module):
             logits[mask] = -math.inf
 
         return logits, glimpse.squeeze(-2)
+
+    def _get_attention_node_data_time_window(self, fixed, time_fixed):
+        K = fixed.glimpse_key + time_fixed.glimpse_key
+        V = fixed.glimpse_val + time_fixed.glimpse_val
+        logit_key = fixed.logit_key + time_fixed.logit_key
+
+        return K, V, logit_key
 
     def _get_attention_node_data(self, fixed, state):
 

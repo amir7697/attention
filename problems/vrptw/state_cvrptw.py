@@ -67,14 +67,6 @@ class StateCVRPTW(NamedTuple):
         depot_start_time = input['depotStartTime']
         depot_finish_time = input['depotFinishTime']
         service_time = input['serviceTime']
-        # print(depot.size())
-        # print(loc.size())
-        # print(demand.size())
-        # print(time_window_start.size())
-        # print(time_window_finish.size())
-        # print(depot_start_time.size())
-        # print(depot_finish_time.size())
-        # print(service_time.size())
 
         batch_size, n_loc, _ = loc.size()
         return StateCVRPTW(

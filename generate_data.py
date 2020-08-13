@@ -23,14 +23,7 @@ def generate_vrp_data(dataset_size, vrp_size):
     ))
 
 
-
 def generate_vrptw_data(dataset_size, vrp_size):
-    # CAPACITIES = {
-    #     10: 20.,
-    #     20: 30.,
-    #     50: 40.,
-    #     100: 50.
-    # }
     CAPACITIES = {
         10: 20.,
         20: 500.,
@@ -73,12 +66,8 @@ def generate_vrptw_data(dataset_size, vrp_size):
     return list(zip(
         depot.tolist(),  # Depot location
         loc.tolist(),  # Node locations
-        # np.random.randint(1, 10, size=(dataset_size, vrp_size)).tolist(),  # Demand, uniform integer 1 ... 9
         demand.tolist(),  # Demand, uniform integer 1 ... 9
         capacity.tolist(),  # Capacity, same for whole dataset
-        # np.random.uniform(size=(dataset_size, 2)).tolist(),  # Depot location
-        # np.random.uniform(size=(dataset_size, vrp_size, 2)).tolist(),  # Node locations
-        # np.full(dataset_size, CAPACITIES[vrp_size]).tolist(),
         depot_start_time.tolist(),
         depot_finish_time.tolist(),
         service_time.tolist(),
