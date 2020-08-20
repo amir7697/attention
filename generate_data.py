@@ -48,6 +48,7 @@ def generate_vrptw_data(dataset_size, vrp_size):
     capacity = np.full(dataset_size, CAPACITIES[vrp_size])
     depot_start_time = np.zeros(dataset_size)
     depot_finish_time = TIME_HORIZON*np.ones(dataset_size)
+    # todo: fix depot service time
     service_time = SERVICE_TIME*np.ones((dataset_size, vrp_size))
 
     time_window_start_time = np.zeros((dataset_size, vrp_size))

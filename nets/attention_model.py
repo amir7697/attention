@@ -63,7 +63,7 @@ class AttentionModel(nn.Module):
         self.temp = 1.0
         self.allow_partial = problem.NAME == 'sdvrp'
         self.is_vrp = problem.NAME == 'cvrp' or problem.NAME == 'sdvrp'
-        self.is_vrptw =  problem.NAME == 'cvrptw'
+        self.is_vrptw = problem.NAME == 'cvrptw'
         self.is_orienteering = problem.NAME == 'op'
         self.is_pctsp = problem.NAME == 'pctsp'
 

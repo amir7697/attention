@@ -117,7 +117,7 @@ class StateCVRPTW(NamedTuple):
 
         # Add the length
         cur_coord = self.coords[self.ids, selected]
-        cur_time = self.cur_time + (cur_coord - self.cur_coord).norm(p=2, dim=-1)
+        cur_time = self.cur_time + self.calculate_eta(cur_coord, self.cur_coord)
         # cur_coord = self.coords.gather(
         #     1,
         #     selected[:, None].expand(selected.size(0), 1, self.coords.size(-1))
@@ -188,3 +188,7 @@ class StateCVRPTW(NamedTuple):
 
     def construct_solutions(self, actions):
         return actions
+
+    @staticmethod
+    def calculate_eta(first_locs, second_locs):
+        return 100*(first_locs - second_locs).norm(p=2, dim=-1)
