@@ -12,3 +12,8 @@ __pycache__/
 *.png
 *.gif
 *.amir
+*.pyc
+*.ipynb
+*.json
+*.pt
+vrptw_evaluation/
