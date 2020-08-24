@@ -82,7 +82,7 @@ class StateCVRPTW(NamedTuple):
             visited_=(  # Visited as mask is easier to understand, as long more memory efficient
                 # Keep visited_ with depot so we can scatter efficiently
                 torch.zeros(
-                    batch_size, 1, n_loc + 1,
+                    batch_size, 1, (n_loc + 1)*vehicle_count,
                     dtype=torch.uint8, device=loc.device
                 )
                 if visited_dtype == torch.uint8
@@ -112,8 +112,8 @@ class StateCVRPTW(NamedTuple):
         assert self.i.size(0) == 1, "Can only update if state represents single step"
 
         # Update the state
-        vehicle_index = selected // self.MAX_NUM_OF_VEHICLES
-        selected_node = selected % self.MAX_NUM_OF_VEHICLES
+        vehicle_index = selected % self.MAX_NUM_OF_VEHICLES
+        selected_node = selected // self.MAX_NUM_OF_VEHICLES
         selected = selected_node[:, None]  # Add dimension for step
         prev_a = selected
         n_loc = self.demand.size(-1)  # Excludes depot
@@ -121,7 +121,7 @@ class StateCVRPTW(NamedTuple):
         # Add the length
         cur_coord = self.coords[self.ids, selected]
         cur_time = self.cur_time[self.ids, vehicle_index] + \
-                   (cur_coord - self.cur_coord[self.ids, 0, vehicle_index]).norm(p=2, dim=-1)
+                   100*(cur_coord - self.cur_coord[self.ids, 0, vehicle_index]).norm(p=2, dim=-1)
         # cur_coord = self.coords.gather(
         #     1,
         #     selected[:, None].expand(selected.size(0), 1, self.coords.size(-1))
@@ -146,10 +146,12 @@ class StateCVRPTW(NamedTuple):
         if self.visited_.dtype == torch.uint8:
             # Note: here we do not subtract one as we have to scatter so the first column allows scattering depot
             # Add one dimension since we write a single value
-            visited_ = self.visited_.scatter(-1, prev_a[:, :, None], 1)
+            for i in range(self.MAX_NUM_OF_VEHICLES):
+                visited_ = self.visited_.scatter(-1, self.MAX_NUM_OF_VEHICLES*prev_a[:, :, None] + i, 1)
         else:
             # This works, will not set anything if prev_a -1 == -1 (depot)
-            visited_ = mask_long_scatter(self.visited_, prev_a - 1)
+            for i in range(self.MAX_NUM_OF_VEHICLES):
+                visited_ = mask_long_scatter(self.visited_, self.MAX_NUM_OF_VEHICLES*(prev_a - 1) + i)
 
         prev_a_tmp = self.prev_a
         prev_a_tmp[self.ids, 0, vehicle_index] = prev_a
@@ -190,13 +192,20 @@ class StateCVRPTW(NamedTuple):
         """
 
         if self.visited_.dtype == torch.uint8:
-            visited_loc = self.visited_[:, :, 1:]
+            visited_loc = self.visited_[:, :, self.MAX_NUM_OF_VEHICLES:]
         else:
             visited_loc = mask_long2bool(self.visited_, n=self.demand.size(-1))
 
 
         # For demand steps_dim is inserted by indexing with id, for used_capacity insert node dim for broadcasting
-        exceeds_cap = (self.demand[self.ids, :] + self.used_capacity[:, :, 0] > self.VEHICLE_CAPACITY)
+        demands = (self.demand.view(-1, 1).repeat(1, self.MAX_NUM_OF_VEHICLES).view(self.ids.shape[0], -1))[self.ids, :]
+        used_cap = (
+            self.used_capacity
+            .view(self.used_capacity.shape[0], self.MAX_NUM_OF_VEHICLES)
+            .repeat(1, demands.shape[-1]//self.MAX_NUM_OF_VEHICLES)
+            [:, None, :]
+        )
+        exceeds_cap = (demands + used_cap > self.VEHICLE_CAPACITY)
         # eta = (self.coords[:, 1:, :] - self.cur_coord).norm(p=2, dim=-1)
         # not_started_time = (self.time_window_start[self.ids, 1:] > self.cur_time[:, :, None] + eta[:, None, :])
         # closed_time = (self.time_window_finish[self.ids, 1:] < self.cur_time[:, :, None] + eta[:, None, :])
@@ -205,15 +214,15 @@ class StateCVRPTW(NamedTuple):
         # | not_started_time | closed_time
 
         # Cannot visit the depot if just visited and still unserved nodes
-        mask_depot = (self.prev_a[:, :, 0] == 0) & ((mask_loc == 0).int().sum(-1) > 0)
-        mask = torch.cat((mask_depot[:, :, None], mask_loc), -1)
+        mask_depot = (self.prev_a == 0) & ((mask_loc == 0).int().sum(-1) > 0)[:, :, None]
+        mask = torch.cat((mask_depot, mask_loc), -1)
 
-        for i in range(1, self.MAX_NUM_OF_VEHICLES):
-            exceeds_cap = (self.demand[self.ids, :] + self.used_capacity[:, :, i] > self.VEHICLE_CAPACITY)
-            mask_loc = visited_loc.to(exceeds_cap.dtype) | exceeds_cap
-            mask_depot = (self.prev_a[:, :, i] == 0) & ((mask_loc == 0).int().sum(-1) > 0)
-
-            mask = torch.cat((mask, torch.cat((mask_depot[:, :, None], mask_loc), -1)), dim=-1)
+        # for i in range(1, self.MAX_NUM_OF_VEHICLES):
+        #     exceeds_cap = (self.demand[self.ids, :] + self.used_capacity[:, :, i] > self.VEHICLE_CAPACITY)
+        #     mask_loc = visited_loc.to(exceeds_cap.dtype) | exceeds_cap
+        #     mask_depot = (self.prev_a[:, :, i] == 0) & ((mask_loc == 0).int().sum(-1) > 0)
+        #
+        #     mask = torch.cat((mask, torch.cat((mask_depot[:, :, None], mask_loc), -1)), dim=-1)
 
         return mask
 

@@ -78,14 +78,12 @@ class AttentionModel(nn.Module):
         self.shrink_size = shrink_size
 
         # Problem specific context parameters (placeholder and step context dimension)
-        if self.is_vrp or self.is_orienteering or self.is_pctsp or self.is_vrptw:
+        if self.is_vrp or self.is_orienteering or self.is_pctsp:
             # Embedding of last node + remaining_capacity / remaining length / remaining prize to collect
             step_context_dim = embedding_dim + 1
 
             if self.is_pctsp:
                 node_dim = 4  # x, y, expected_prize, penalty
-            elif self.is_vrptw:
-                node_dim = 3  # x, y, demand, start time, finish time
             else:
                 node_dim = 3  # x, y, demand / prize
 
@@ -94,6 +92,12 @@ class AttentionModel(nn.Module):
             
             if self.is_vrp and self.allow_partial:  # Need to include the demand if split delivery allowed
                 self.project_node_step = nn.Linear(1, 3 * embedding_dim, bias=False)
+        elif self.is_vrptw:
+            self.vehicle_count = 4
+            step_context_dim = embedding_dim + self.vehicle_count
+            node_dim = 3  # x, y, demand, start time, finish time
+            # Special embedding projection for depot node
+            self.init_embed_depot = nn.Linear(2, embedding_dim)
         else:  # TSP
             assert problem.NAME == "tsp", "Unsupported problem: {}".format(problem.NAME)
             step_context_dim = 2 * embedding_dim  # Embedding of first and last node
@@ -242,39 +246,43 @@ class AttentionModel(nn.Module):
 
         # Perform decoding steps
         i = 0
-        while not (self.shrink_size is None and state.all_finished()):
+        # while not (self.shrink_size is None and state.all_finished()):
+        while not state.all_finished():
+            # if self.shrink_size is not None:
+            #     unfinished = torch.nonzero(state.get_finished() == 0)
+            #     if len(unfinished) == 0:
+            #         break
+            #     unfinished = unfinished[:, 0]
+            #     # Check if we can shrink by at least shrink_size and if this leaves at least 16
+            #     # (otherwise batch norm will not work well and it is inefficient anyway)
+            #     if 16 <= len(unfinished) <= state.ids.size(0) - self.shrink_size:
+            #         # Filter states
+            #         state = state[unfinished]
+            #         fixed = fixed[unfinished]
+            if self.is_vrptw:
+                log_p, mask = self._get_log_p(fixed, state)
+                selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
+                state = state.update(selected)
+            else:
+                log_p, mask = self._get_log_p(fixed, state)
 
-            if self.shrink_size is not None:
-                unfinished = torch.nonzero(state.get_finished() == 0)
-                if len(unfinished) == 0:
-                    break
-                unfinished = unfinished[:, 0]
-                # Check if we can shrink by at least shrink_size and if this leaves at least 16
-                # (otherwise batch norm will not work well and it is inefficient anyway)
-                if 16 <= len(unfinished) <= state.ids.size(0) - self.shrink_size:
-                    # Filter states
-                    state = state[unfinished]
-                    fixed = fixed[unfinished]
+                # Select the indices of the next nodes in the sequences, result (batch_size) long
+                selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
 
-            log_p, mask = self._get_log_p(fixed, state)
+                state = state.update(selected)
 
-            # Select the indices of the next nodes in the sequences, result (batch_size) long
-            selected = self._select_node(log_p.exp()[:, 0, :], mask[:, 0, :])  # Squeeze out steps dimension
+                # # Now make log_p, selected desired output size by 'unshrinking'
+                # if self.shrink_size is not None and state.ids.size(0) < batch_size:
+                #     log_p_, selected_ = log_p, selected
+                #     log_p = log_p_.new_zeros(batch_size, *log_p_.size()[1:])
+                #     selected = selected_.new_zeros(batch_size)
+                #
+                #     log_p[state.ids[:, 0]] = log_p_
+                #     selected[state.ids[:, 0]] = selected_
 
-            state = state.update(selected)
-
-            # Now make log_p, selected desired output size by 'unshrinking'
-            if self.shrink_size is not None and state.ids.size(0) < batch_size:
-                log_p_, selected_ = log_p, selected
-                log_p = log_p_.new_zeros(batch_size, *log_p_.size()[1:])
-                selected = selected_.new_zeros(batch_size)
-
-                log_p[state.ids[:, 0]] = log_p_
-                selected[state.ids[:, 0]] = selected_
-
-            # Collect output of step
-            outputs.append(log_p[:, 0, :])
-            sequences.append(selected)
+                # Collect output of step
+                outputs.append(log_p[:, 0, :])
+                sequences.append(selected)
 
             i += 1
 
@@ -324,9 +332,18 @@ class AttentionModel(nn.Module):
         # fixed context = (batch_size, 1, embed_dim) to make broadcastable with parallel timesteps
         fixed_context = self.project_fixed_context(graph_embed)[:, None, :]
 
-        # The projection of the node embeddings for the attention is calculated once up front
-        glimpse_key_fixed, glimpse_val_fixed, logit_key_fixed = \
-            self.project_node_embeddings(embeddings[:, None, :, :]).chunk(3, dim=-1)
+        if self.is_vrptw:
+            multi_vehicle_embedding = (
+                embeddings
+                .repeat(1, 1, self.vehicle_count)
+                .view(embeddings.shape[0], self.vehicle_count*embeddings.shape[1], embeddings.shape[2])
+            )
+            glimpse_key_fixed, glimpse_val_fixed, logit_key_fixed = \
+                self.project_node_embeddings(multi_vehicle_embedding[:, None, :, :]).chunk(3, dim=-1)
+        else:
+            # The projection of the node embeddings for the attention is calculated once up front
+            glimpse_key_fixed, glimpse_val_fixed, logit_key_fixed = \
+                self.project_node_embeddings(embeddings[:, None, :, :]).chunk(3, dim=-1)
 
         # No need to rearrange key for logit as there is a single head
         fixed_attention_node_data = (
@@ -384,7 +401,7 @@ class AttentionModel(nn.Module):
         current_node = state.get_current_node()
         batch_size, num_steps = current_node.size()
 
-        if self.is_vrp or self.is_vrptw:
+        if self.is_vrp:
             # Embedding of previous node + remaining capacity
             if from_depot:
                 # 1st dimension is node idx, but we do not squeeze it since we want to insert step dimension
@@ -408,6 +425,33 @@ class AttentionModel(nn.Module):
                                 .expand(batch_size, num_steps, embeddings.size(-1))
                         ).view(batch_size, num_steps, embeddings.size(-1)),
                         self.problem.VEHICLE_CAPACITY - state.used_capacity[:, :, None]
+                    ),
+                    -1
+                )
+        elif self.is_vrptw:
+            # Embedding of previous node + remaining capacity
+            if from_depot:
+                # 1st dimension is node idx, but we do not squeeze it since we want to insert step dimension
+                # i.e. we actually want embeddings[:, 0, :][:, None, :] which is equivalent
+                return torch.cat(
+                    (
+                        embeddings[:, 0:1, :].expand(batch_size, num_steps, embeddings.size(-1)),
+                        # used capacity is 0 after visiting depot
+                        self.problem.VEHICLE_CAPACITY - torch.zeros_like(state.used_capacity)
+                    ),
+                    -1
+                )
+            else:
+                return torch.cat(
+                    (
+                        torch.gather(
+                            embeddings,
+                            1,
+                            current_node.contiguous()
+                                .view(batch_size, num_steps, 1)
+                                .expand(batch_size, num_steps, embeddings.size(-1))
+                        ).view(batch_size, num_steps, embeddings.size(-1)),
+                        self.problem.VEHICLE_CAPACITY - state.used_capacity
                     ),
                     -1
                 )
