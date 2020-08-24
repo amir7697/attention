@@ -12,6 +12,8 @@ SERVICE_TIME_COST_COEF = 0
 DELAY_COEF = 0.5
 EARLY_COEF = 0.1
 DISTANCE_COST_COEF = 100
+TIME_SCALE = 100
+
 
 class CVRPTW(object):
 
@@ -56,8 +58,12 @@ class CVRPTW(object):
                                              dataset['serviceTime']), 1)
 
         locations = loc_with_depot.gather(1, pi[..., None].expand(*pi.size(), loc_with_depot.size(-1)))
-        arrival_times = torch.cat((torch.zeros(batch_size, device=locations.device)[:, None],
-                                   (locations[:, 1:] - locations[:, :-1]).norm(p=2, dim=2)), 1)
+        arrival_times = torch.cumsum(
+            torch.cat((
+                TIME_SCALE * (locations[:, 0] - dataset['depot']).norm(p=2, dim=-1),
+                TIME_SCALE * (locations[:, 1:] - locations[:, :-1]).norm(p=2, dim=-1)
+            ), 1), dim=-1
+        )
 
         # print(pi.size())
         window_start_time = start_time_with_depot.gather(1, pi)
